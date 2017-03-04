@@ -94,12 +94,16 @@ Scope.prototype.$evalAsync = function (fn) {
  *       初始化所有组件
  * */
 
+//首先注册组件。也就是将组件名和对应工厂函数对应。 通过组件名查找缓存，如果已经有初始化的service则返回，
+// 如果没有看该组件是否注册，如果注册过 将 其对应的工厂函数和依赖初始化 并存入缓存
+//初始化过程就是通过工厂函数 匹配出依赖的组件名，在依赖列表中找该组件，找到就存在deps中，没找到就初始化该依赖。最后返回该工厂函数，初始化的依赖作为参数传入
+
 var Provider = {
     _providers: {},
     _cache: {
         $rootScope: new Scope()
     },
-    directives: function (name, fn) {
+    directive: function (name, fn) {
         return this._register(name + Provider.DIRECTIVE_SUFFIX, fn);
     },
     service: function (name, fn) {
@@ -129,16 +133,16 @@ var Provider = {
     },
 
     //通过service对应的工厂函数 本地依赖 初始化service
-     invoke : function (fn,locals) {
-        　locals = locals || {};
-         var deps = this.annotate(fn).map(function (s) {
-             return locals[s] || this.get(s,locals);
-         },this);
-         return fn.apply(null,deps);
+    invoke: function (fn, locals) {
+        locals = locals || {};
+        var deps = this.annotate(fn).map(function (s) {
+            return locals[s] || this.get(s, locals);
+        }, this);
+        return fn.apply(null, deps);
     },
 
     //返回一个数组 数组是当前service依赖的模块的名称
-    annotate:function (fn) {
+    annotate: function (fn) {
         var res = fn.toString()
             .replace(/((\/\/.*$)|(\/\*[\s\S]*?\*\/))/mg, '')
             .match(/\((.*?)\)/);
@@ -165,14 +169,76 @@ var DOMCompiler = {
 
     //用来启动整个项目
     bootstrap: function () {
-
+        this.compile(Document.children[0],Provider.get('$rootScope'));
     },
 
     //执行依附于当前html节点上指令的代码，并且递归执行子元素
-    compile:function () {
-        
-    }
+    compile: function (el,scope) {
+        var dirs=this._getElDirectives(el),
+            dir,
+            scopeCreated;
+        dirs.forEach(function (d) {
+            dir=Provider.get(d.name+Provider.DIRECTIVE_SUFFIX);
+            if (dir.scope && !scopeCreated) {
+                scope=scope.$new();
+                scopeCreated=true;
+            }
+            dir.link(el,scope,d.value);
+        })
+        Array.prototype.slice.call(el.children).forEach(function (c) {
+            this.compile(c,scope);
+        },this);
 
+    },
+
+    //获取 属性类型的指令及其参数
+    _getElDirectives: function (ele) {
+        var attrs=ele.attributes,
+            result=null;
+        for (var i=0;i<attrs.length;i++) {
+            if (Provider.get(attrs[i].name+Provider.DIRECTIVE_SUFFIX)) {
+                result.push({
+                    name: attrs[i].name,
+                    value: attrs[i].value
+                })
+            }
+        }
+        return result;
+    }
+}
+
+/*
+* Scope
+* 
+* */
+
+function Scope (parent,id) {
+    this.$$watchers=[];
+    this.$$children=[];
+    this.$parent= parent;
+    this.$id=id || 0;
+}
+Scope.counter=0;
+
+Scope.prototype.$watch=function (exp,fn) {
+    this.$$watchers.push({
+        exp:exp,
+        fn:fn,
+        last:Utils.clone(this.$eval(exp))
+    })
+}
+
+Scope.prototype.$new=function () {
+    Scope.counter++;
+    var obj=new Scope(this,Scope.counter);
+    Object.setPrototypeOf(obj,this);
+    this.$$children.push(obj);
+    return obj;
+}
+
+Scope.prototype.$destory=function () {
+    var pc=this.$parent.$$children;
+    pc.splice(pc.indexOf(this),1);
 }
 
 
